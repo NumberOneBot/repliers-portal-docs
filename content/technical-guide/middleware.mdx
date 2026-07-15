@@ -1,10 +1,10 @@
 # Middleware & Routing Pipeline
 
-Portal runs a single Next.js middleware (`src/middleware.ts`) on every page and
-API request. It handles only **true per-request runtime logic**: HTTPS
+Portal runs a single Next.js proxy — `src/proxy.ts` (the Next 16 rename of
+`middleware.ts`) — on every page and API request. It handles only **true per-request runtime logic**: HTTPS
 enforcement and a route guard that sends unknown paths to `/404`. All URL
 rewrites and redirects are generated at build time and served by
-`next.config.js` — the middleware never mutates URLs, it only reads the
+`next.config.js` — the proxy never mutates URLs, it only reads the
 generated rules to decide which paths are "known".
 
 See [Architecture](/technical-guide/architecture) for the overall structure.
@@ -13,7 +13,7 @@ See [Architecture](/technical-guide/architecture) for the overall structure.
 
 | File                           | Role                                                                        |
 | ------------------------------ | --------------------------------------------------------------------------- |
-| `src/middleware.ts`            | The middleware — HTTPS enforcement + route guard + `matcher` config         |
+| `src/proxy.ts`                 | The proxy — HTTPS enforcement + route guard + `matcher` config               |
 | `scripts/generate-rewrites.ts` | Pre-build script that produces the generated rule files                     |
 | `rewrites.generated.json`      | Generated rewrites (package root, imported as `../rewrites.generated.json`) |
 | `redirects.generated.json`     | Generated redirects (package root)                                          |
@@ -41,9 +41,12 @@ Each request runs through these steps in order:
    pass through), and matches nothing in `knownRoutes`, it is redirected to
    `/404`.
 
-3. **Fall-through** — everything else returns `NextResponse.next()`. (A
-   GrowthBook UUID cookie block exists but is **disabled** — it set a cookie
-   that was never read back, so it had no effect.)
+3. **Fall-through** — everything else returns `NextResponse.next()`. On builds
+   whose tenant config sets `noIndex: true` (the demo/sample tenants), the
+   response also carries an `X-Robots-Tag: noindex, nofollow` header so those
+   builds stay out of search engines at the HTTP layer. (A GrowthBook UUID
+   cookie block exists but is **disabled** — it set a cookie that was never read
+   back, so it had no effect.)
 
 ## Generated rewrites & redirects
 
@@ -57,7 +60,7 @@ legacy WordPress rewrites, and building redirects (auto-generated + manual).
 The output — `rewrites.generated.json` / `redirects.generated.json` — is the
 single source of truth consumed by both `next.config.js`
 (`rewrites()` returns them under `beforeFiles` so feature-flag rewrites win over
-filesystem pages; `redirects()` returns them directly) and the middleware's
+filesystem pages; `redirects()` returns them directly) and the proxy's
 route guard. Do not edit the generated files by hand.
 
 ## Configuration / env
@@ -72,7 +75,7 @@ route guard. Do not edit the generated files by hand.
 
 - **Matcher scope** — `config.matcher` excludes `_next/static`, `_next/image`,
   `favicon.ico`, `sitemap.xml`, `robots.txt`, and any path with a file
-  extension (`.*\.\w+$`). Static files never reach the middleware, so image
+  extension (`.*\.\w+$`). Static files never reach the proxy, so image
   optimizer mock requests can't receive a redirect body.
 - **Percent-encoding** — both the request path and each known route are
   `decodeURIComponent`-decoded before comparison (wrapped in `try/catch`), so
@@ -83,3 +86,8 @@ route guard. Do not edit the generated files by hand.
   redirected.
 - **Rules changed?** Rebuild or re-run `pnpm generate:rewrites` — the route
   guard reads the generated JSON, so stale files can 404 valid paths.
+- **noindex builds** — the `X-Robots-Tag: noindex, nofollow` header is driven by
+  the tenant `content.noIndex` flag (base default `true`) and pairs with the
+  `<meta name="robots">` tag from the root layout. Crawling is left allowed so
+  the directive is actually read — see
+  [tenant configuration](/getting-started/configuration#content).

@@ -177,6 +177,10 @@ import defaultContent from '@defaults/content'
 type Content = typeof defaultContent
 
 const instanceContent: Partial<Content> = {
+  // A new tenant is a live production site, so opt into search indexing.
+  // The base default is `noIndex: true` (keeps demo/sample builds out of
+  // search); omitting this line would leave the new tenant de-indexed.
+  noIndex: false,
   siteLogo: { url: '/newtenant/logo.svg', width: 180, height: 48 },
   siteMobileLogo: {
     url: '/newtenant/logo-monogram.svg',

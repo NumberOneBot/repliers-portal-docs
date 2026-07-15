@@ -86,7 +86,7 @@ For a multi-level object like `map`, spread each nested object you touch (`mapbo
 | `theme/palette.ts`    | MUI semantic colors     | `primary`, `secondary` (map from `colors`)                                          |
 | `theme/typography.ts` | Fonts                   | `fontFamily`, heading weights                                                       |
 | `theme/components.ts` | MUI component styling   | per-component `styleOverrides`                                                      |
-| `content.ts`          | Identity, SEO, scripts  | `siteName`, `siteLogo`, `contactEmail/Phone`, `siteMetadata`, `customScripts`       |
+| `content.ts`          | Identity, SEO, scripts  | `siteName`, `siteLogo`, `contactEmail/Phone`, `siteMetadata`, `noIndex`, `customScripts` |
 | `map.ts`              | Map framing & overlays  | `mapboxDefaults` (center/zoom), `controls`, `searchArea.defaultPolygon`, `overlays` |
 | `search.ts`           | Search & MLS boards     | `defaultBoardId`, `vowBoardId`, `singleBoard`, `autosuggestPosition`                |
 | `filters.ts`          | Search filters          | `defaultFilters`, `listingTypes`, `advancedFilterSlots`                             |
@@ -115,6 +115,14 @@ Site identity, logos/splashscreens (served from `public/<tenant>/`), contact inf
 `siteMetadata` (SEO), `pagesMeta` (per-page SEO with `{token}` placeholders), and
 `customScripts` (analytics/widgets, with a Next.js loading strategy). Override with
 `deepmerge`.
+
+`noIndex` (boolean) excludes the whole build from search-engine indexing: it renders
+`<meta name="robots" content="noindex, nofollow">` and sends the `X-Robots-Tag: noindex, nofollow`
+response header (via `proxy.ts`). The **base default is `true`**, so the demo build — and any
+tenant that does not override it — stays out of the index; live production tenants opt in with
+`noIndex: false`. Crawling is left allowed on purpose so the directive is seen; a `robots.txt`
+`Disallow` is deliberately not used, because it would stop crawlers from ever reading the
+`noindex` and would freeze already-indexed pages in results.
 
 ### map
 
