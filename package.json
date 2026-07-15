@@ -25,5 +25,9 @@
     "pagefind": "^1.3.0",
     "prettier": "^3.7.4",
     "typescript": "^5.0.0"
+  },
+  "comment:overrides": "Nextra 4.6.1 breaks on zod >= 4.4 (z.custom() rejects undefined ReactNode children → prerender crash). Pin to the last working patch. Remove once Nextra fixes compatibility.",
+  "overrides": {
+    "zod": "4.3.6"
   }
 }
