@@ -1,0 +1,85 @@
+# Middleware & Routing Pipeline
+
+Portal runs a single Next.js middleware (`src/middleware.ts`) on every page and
+API request. It handles only **true per-request runtime logic**: HTTPS
+enforcement and a route guard that sends unknown paths to `/404`. All URL
+rewrites and redirects are generated at build time and served by
+`next.config.js` — the middleware never mutates URLs, it only reads the
+generated rules to decide which paths are "known".
+
+See [Architecture](/technical-guide/architecture) for the overall structure.
+
+## Key files
+
+| File                           | Role                                                                        |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| `src/middleware.ts`            | The middleware — HTTPS enforcement + route guard + `matcher` config         |
+| `scripts/generate-rewrites.ts` | Pre-build script that produces the generated rule files                     |
+| `rewrites.generated.json`      | Generated rewrites (package root, imported as `../rewrites.generated.json`) |
+| `redirects.generated.json`     | Generated redirects (package root)                                          |
+| `next.config.js`               | Consumes the generated files via `rewrites()` / `redirects()`               |
+
+## What it does
+
+Each request runs through these steps in order:
+
+1. **HTTPS enforcement** — in `production`, if `x-forwarded-proto === 'http'`,
+   respond with a `301` to the `https://` URL. The check is `=== 'http'`
+   (not `!== 'https'`) on purpose: internal Next.js mock requests (e.g. the
+   image optimizer's `fetchInternalImage`) carry no `x-forwarded-proto` header,
+   so they are never redirected and never receive a redirect body instead of
+   image bytes. Skipped entirely when `FORCE_HTTP=true`.
+2. **Route guard** — builds a `knownRoutes` allowlist from three sources:
+   - `staticRoutes` — internal/asset prefixes (`/_next/`, `/api/`, `/auth`,
+     `/images/`, `/static/`, `/favicon`, `/404`, `/unsubscribe`)
+   - `appRoutes` — all values from `@configs/routes` (excluding `/`)
+   - `rewriteRoutes` — the static prefix of every generated rewrite and redirect
+     `source` (dynamic segments like `/:param` and `/:path*` are stripped so
+     `startsWith` covers nested paths such as `/ma/boston`)
+
+   If the request path is not `/`, contains no `.` (unknown static extensions
+   pass through), and matches nothing in `knownRoutes`, it is redirected to
+   `/404`.
+
+3. **Fall-through** — everything else returns `NextResponse.next()`. (A
+   GrowthBook UUID cookie block exists but is **disabled** — it set a cookie
+   that was never read back, so it had no effect.)
+
+## Generated rewrites & redirects
+
+The rewrite/redirect rules are **generated, not hand-edited**. Run
+`pnpm generate:rewrites` (`tsx scripts/generate-rewrites.ts`, also part of
+`prebuild`) to regenerate them. The script merges several per-tenant sources in
+priority order: `rootPage` feature-flag rewrite, `stateCode` URL alias
+(`/<code>/* → /locations/*`), instance static rewrites (`configs/<tenant>/rewrites.ts`),
+legacy WordPress rewrites, and building redirects (auto-generated + manual).
+
+The output — `rewrites.generated.json` / `redirects.generated.json` — is the
+single source of truth consumed by both `next.config.js`
+(`rewrites()` returns them under `beforeFiles` so feature-flag rewrites win over
+filesystem pages; `redirects()` returns them directly) and the middleware's
+route guard. Do not edit the generated files by hand.
+
+## Configuration / env
+
+| Variable                   | Effect                                                      |
+| -------------------------- | ----------------------------------------------------------- |
+| `FORCE_HTTP=true`          | Disables the HTTP → HTTPS redirect (local/http deployments) |
+| `DISABLE_ROUTE_GUARD=true` | Disables the unknown-path → `/404` guard                    |
+| `NODE_ENV`                 | HTTPS enforcement only runs when `=== 'production'`         |
+
+## Gotchas & hints
+
+- **Matcher scope** — `config.matcher` excludes `_next/static`, `_next/image`,
+  `favicon.ico`, `sitemap.xml`, `robots.txt`, and any path with a file
+  extension (`.*\.\w+$`). Static files never reach the middleware, so image
+  optimizer mock requests can't receive a redirect body.
+- **Percent-encoding** — both the request path and each known route are
+  `decodeURIComponent`-decoded before comparison (wrapped in `try/catch`), so
+  emoji/non-ASCII slugs match regardless of upper/lower-case escape sequences
+  (`%F0…` vs `%f0…`).
+- **Mock-request guard** — the `=== 'http'` HTTPS check plus the extension-based
+  matcher exclusion together ensure Next.js internal requests are never
+  redirected.
+- **Rules changed?** Rebuild or re-run `pnpm generate:rewrites` — the route
+  guard reads the generated JSON, so stale files can 404 valid paths.

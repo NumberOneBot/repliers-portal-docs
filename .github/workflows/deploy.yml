@@ -1,0 +1,50 @@
+name: Deploy docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      # Enables output: 'export' + basePath in next.config.mjs (off in the monorepo).
+      PAGES_DEPLOY: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: npm install
+
+      # Run next directly so the monorepo postbuild (indexes .next) does not fire;
+      # the export writes static HTML to out/.
+      - run: npx next build
+
+      # Build the search index from the exported HTML.
+      - run: npx pagefind --site out --output-path out/_pagefind
+
+      # GitHub Pages runs Jekyll, which drops _next / _pagefind without this.
+      - run: touch out/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

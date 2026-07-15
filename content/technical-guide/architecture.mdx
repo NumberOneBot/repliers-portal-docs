@@ -1,0 +1,191 @@
+# Architecture
+
+Portal is organized as a monorepo with a clear separation between components, routes, and configurations.
+
+## Monorepo Structure
+
+```
+/smartmls-frontend
+│
+├── packages/
+│   ├── portal-frontend/          ← Next.js application (main)
+│   │   ├── src/
+│   │   │   ├── app/                  Next.js App Router (routes)
+│   │   │   ├── components/           UI components
+│   │   │   ├── configs/              Tenant configurations
+│   │   │   ├── providers/            React Context providers
+│   │   │   ├── services/             API clients
+│   │   │   ├── hooks/                Custom React hooks
+│   │   │   ├── utils/                Utility functions
+│   │   │   ├── features/             Feature flags
+│   │   │   └── i18n/                 Translations
+│   │   └── ...
+│   │
+│   ├── ai-agent-client/          ← Vite + React (AI agent)
+│   │
+│   └── docs/                     ← Nextra documentation (this site)
+│
+├── package.json                  ← Root package.json (workspaces)
+└── CLAUDE.md                     ← AI assistant instructions
+```
+
+## Components Structure
+
+```
+/src/components/
+│
+├── pages/                         ← PAGE CONTENT (most work happens here)
+│   ├── home/
+│   │   ├── HomePageContent.tsx       ← Default implementation
+│   │   ├── _<tenant>/
+│   │   │   └── HomePageContent.tsx   ← Tenant override
+│   │   └── components/
+│   │       ├── HeroBanner.tsx
+│   │       ├── FeaturedProperties.tsx
+│   │       └── ...
+│   ├── search/
+│   ├── listing/                      ← PDP (Property Details Page)
+│   ├── estimate/
+│   ├── blog/
+│   └── dashboard/
+│
+├── templates/                     ← LAYOUT TEMPLATES
+│   ├── Header/
+│   │   ├── Header.tsx
+│   │   ├── _<tenant>/Header.tsx      ← Tenant override
+│   │   └── components/
+│   ├── Footer/
+│   └── PageTemplate/
+│
+├── shared/                        ← REUSABLE COMPONENTS
+│   ├── Cards/
+│   │   ├── PropertyCard.tsx
+│   │   └── PropertyCardSkeleton.tsx
+│   ├── Filters/
+│   ├── Map/
+│   ├── Stats/
+│   └── CmsWidgets/
+│
+└── atoms/                         ← BASE UI ELEMENTS
+    └── Button, Input, Typography, etc.
+```
+
+### Component Placement Guide
+
+| Folder       | When to Use                                  |
+| ------------ | -------------------------------------------- |
+| `pages/`     | Page-specific content and components         |
+| `templates/` | Layout components (Header, Footer, wrappers) |
+| `shared/`    | Components used on 2+ pages                  |
+| `atoms/`     | Base UI elements (rarely changed)            |
+
+## App Router (Routes)
+
+```
+/app
+│
+├── /                              ← HOME PAGE
+│   └── Landing with search, featured properties
+│
+├── /search/[layout]               ← SEARCH PAGE
+│   ├── /search/map                    Map view
+│   └── /search/grid                   Grid cards view
+│
+├── /listing/[[...listingName]]    ← PROPERTY DETAILS (PDP)
+│   └── Full property information page
+│
+├── /locations/[[...slugs]]        ← LOCATION CATALOG
+│   ├── /locations/                    All regions
+│   ├── /locations/[area]/             Region (King County)
+│   ├── /locations/[area]/[city]/      City (Seattle)
+│   └── /locations/[area]/[city]/[neighborhood]/
+│
+├── /blog                          ← BLOG
+│   ├── /blog/                         Article list
+│   ├── /blog/[slug]                   Single article
+│   └── /blog/category/[cat]           Category page
+│
+├── /pages/[slug]                  ← CMS PAGES
+│   └── Dynamic WordPress pages
+│
+├── /estimate                      ← HOME VALUATION
+├── /dashboard                     ← MARKET DASHBOARD
+├── /favorites                     ← USER FAVORITES
+├── /saved-searches                ← SAVED SEARCHES
+├── /recently-viewed               ← RECENTLY VIEWED
+├── /profile                       ← USER PROFILE
+├── /login                         ← AUTHENTICATION
+│
+└── /(StaticPages)                 ← STATIC PAGES (route group)
+    ├── /about
+    ├── /contact-us
+    ├── /privacy-policy
+    └── /terms-of-use
+```
+
+## Route Groups
+
+Next.js App Router uses route groups (folders with parentheses) for organization without affecting URLs:
+
+| Route Group     | Purpose                              |
+| --------------- | ------------------------------------ |
+| `(ClientPages)` | Pages requiring client-side features |
+| `(StaticPages)` | Static marketing pages               |
+| `(Estimates)`   | Estimate flow pages                  |
+
+## File Conventions
+
+| File            | Purpose               |
+| --------------- | --------------------- |
+| `page.tsx`      | Route page component  |
+| `layout.tsx`    | Shared layout wrapper |
+| `loading.tsx`   | Loading UI            |
+| `error.tsx`     | Error boundary        |
+| `not-found.tsx` | 404 page              |
+
+## Import Aliases
+
+| Alias          | Resolves To                                                   |
+| -------------- | ------------------------------------------------------------- |
+| `@configs/*`   | `src/configs/[tenant]/*` → `src/configs/defaults/*`           |
+| `@content/*`   | `src/content/[tenant]/*` → `src/content/defaults/*`           |
+| `@icons/*`     | `src/assets/icons/[tenant]/*` → `src/assets/icons/defaults/*` |
+| `@defaults/*`  | `src/configs/defaults/*` (always)                             |
+| `@templates`   | `src/components/templates`                                    |
+| `@templates/*` | `src/components/templates/components/*`                       |
+| `@pages/*`     | `src/components/pages/*`                                      |
+| `@shared/*`    | `src/components/shared/*`                                     |
+
+## Build Process
+
+```
+pnpm frontend:dev
+        │
+        ▼
+┌───────────────────┐
+│  prebuild script  │
+│  ┌─────────────┐  │
+│  │ generate:   │  │  Reads NEXT_PUBLIC_APP_CONFIGURATION
+│  │ tsconfig    │  │  Generates tsconfig.json with paths
+│  └─────────────┘  │
+│  ┌─────────────┐  │
+│  │ generate:   │  │  Generates static feature flags
+│  │ features    │  │
+│  └─────────────┘  │
+│  ┌─────────────┐  │
+│  │ generate:   │  │  Generates rewrites.generated.json
+│  │ rewrites    │  │
+│  └─────────────┘  │
+│  ┌─────────────┐  │
+│  │ generate:   │  │  Generates the deployment id
+│  │ deployment- │  │
+│  │ id          │  │
+│  └─────────────┘  │
+└─────────┬─────────┘
+          │
+          ▼
+┌───────────────────┐
+│   next dev        │
+│   (development)   │
+└───────────────────┘
+```

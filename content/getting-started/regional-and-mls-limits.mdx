@@ -1,0 +1,119 @@
+import { Callout } from 'nextra/components'
+
+# Regional & MLS Limits
+
+**Track B.** Why the same codebase shows different data — and different _rules_ — depending
+on the tenant's MLS board and region. These constraints come from MLS data agreements and
+regional privacy law, not from product preference.
+
+## The proxy backend
+
+```
+Frontend  ──►  Proxy backend (NEXT_PUBLIC_API_URL)  ──►  Repliers API  ──►  MLS
+```
+
+The frontend never calls Repliers directly. The proxy forwards requests and can reshape
+responses (clustering, board backfill, permission handling). When cross-referencing the
+[Repliers API docs](https://help.repliers.com/), treat them as the _upstream_ contract:
+don't assume every raw Repliers field reaches the client unchanged.
+
+## Restricted listings (`blurRestrictedProperty`)
+
+Some MLS boards mark listings as not publicly displayable (`displayPublic = 'N'`). When
+`blurRestrictedProperty` is on, **guests (not logged in)** see such a listing obscured — it
+is resolved to a "sold" status group with blurred images and hidden address; a signed-in
+user sees it normally. The relevant logic lives in
+`src/utils/listings/visibility.ts` and `src/utils/listings/status.ts`, applied via
+`ListingProvider`.
+
+The blurred surfaces carry a shared `RestrictedMessage` overlay ("only visible to
+registered users") — search grid cards, the PDP gallery, and the map **listing drawer**.
+The drawer blurs only its gallery and renders the message on a small shaded badge centered
+over the card (the message layer is lifted out of the tiny gallery). This applies to every
+tenant with `blurRestrictedProperty` on.
+
+<Callout type="info">
+  **movesmartly-com** overrides `RestrictedMessage`
+  (`src/components/shared/Photos/_movesmartly-com/`) to add a **Sign in** button
+  to that overlay for guests, wherever it renders (grid, PDP, drawer). The
+  ephemeral hover-marker popup uses the `map` variant (icon only) and
+  intentionally gets **no** button — it disappears on pointer-leave.
+</Callout>
+
+Each listing carries a `permissions` object the app honors:
+
+| Field                          | Meaning                                                   |
+| ------------------------------ | --------------------------------------------------------- |
+| `displayPublic`                | Whether unauthenticated users may see the listing at all. |
+| `displayAddressOnInternet`     | Whether the address may be shown online.                  |
+| `displayInternetEntireListing` | Whether the full listing may be shown online.             |
+| `displayOnMap`                 | Whether the listing may be pinned on the map.             |
+
+<Callout type="info">
+  `blurRestrictedProperty` is **on** for Canada-based tenants, where regional
+  MLS privacy rules require it. It is **off** for tenants whose feed/agreement
+  permits full public display.
+</Callout>
+
+## Multi-board: IDX vs VOW
+
+An MLS feed can come in flavours with different data richness:
+
+- **IDX** — the broadly displayable public feed.
+- **VOW** (Virtual Office Website) — fuller history/detail, typically gated behind login.
+
+`configs/<tenant>/search.ts` routes between them:
+
+| Field                | Role                                                                                                                                                       |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `defaultBoardId`     | Primary (IDX) board id.                                                                                                                                    |
+| `vowBoardId`         | VOW board id — equals `defaultBoardId` for single-board tenants.                                                                                           |
+| `internalVowBoardId` | Internal id seen in a listing's `duplicates` when the same MLS also exists on VOW; when set, links/details retarget to `vowBoardId`.                       |
+| `singleBoard`        | Auto-derived `defaultBoardId === vowBoardId`. When `true`, the board id is omitted from URLs and API calls; multi-board tenants set it `false` explicitly. |
+
+Board routing per tenant (values from the committed `search.ts`; single-board tenants
+inherit `defaults` if they have no override):
+
+| Tenant     | defaultBoardId | vowBoardId | internalVowBoardId | singleBoard |
+| ---------- | -------------- | ---------- | ------------------ | ----------- |
+| `defaults` | 110            | 110        | —                  | ✓           |
+| Tenant A   | 91             | 90         | —                  | ✕           |
+| Tenant B   | 91             | 90         | 6381               | ✕           |
+| Tenant C   | 2              | 2          | —                  | ✓           |
+| Tenant D   | 68             | 68         | —                  | ✓           |
+| Tenant E   | 149            | 149        | —                  | ✓           |
+
+<Callout type="warning">
+  Board ids are MLS-assigned; confirm the correct ids and whether VOW routing
+  applies with Repliers / the board before enabling multi-board behavior. Don't
+  infer a board's identity from its number.
+</Callout>
+
+## AI availability by region
+
+The AI analysis features (`aiSearch`, `aiImageSearch`, `aiQuality`, `aiSpaces`) and the
+conversational `aiChat` / `aiAgent` are enabled broadly for US-based and flagship tenants
+(including the `defaults` build) but are **largely off for Canada-based tenants**. Treat AI
+availability as a per-tenant policy decision governed in GrowthBook, not a global default.
+
+## Capabilities that depend on region/integration
+
+| Capability                      | Regional / integration dependency                                                                                                  |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `blog`, `buildings`             | A CMS the tenant runs (WordPress/Ghost) — see the env vars in [First Launch](/getting-started/first-launch#environment-variables). |
+| `locations`                     | A pre-generated `public/<tenant>/locations.json` for that market.                                                                  |
+| `liveBy`                        | LiveBy overlay data for the region.                                                                                                |
+| Enrichment (enrichment tenants) | Neighborhood/enrichment (`MOVESMARTLY_*`) and boundary-data (`PYB_*`) credentials.                                                 |
+
+## Before you enable a capability
+
+Displaying sold data, open houses, addresses, or photos is governed by the tenant's **MLS
+data agreement**. What one board permits, another forbids. Before turning on
+`openHouse`, sold history, or full address/photo display for a new tenant, confirm it is
+allowed for that board — and prefer keeping `blurRestrictedProperty` on where privacy rules
+apply.
+
+## Next
+
+Ready to create a tenant end to end? See the
+[Adding a New Tenant](/tutorials/adding-tenant) tutorial.

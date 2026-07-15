@@ -1,0 +1,142 @@
+import { Callout } from 'nextra/components'
+
+# Configuration
+
+**Track A.** Which config files exist, how tenant overrides resolve, and what you change
+first. For the full mechanism (webpack plugin, component overrides, icons) see the
+[Multi-tenant System](/technical-guide/multi-tenant).
+
+## How overrides resolve
+
+Configs live under `packages/portal-frontend/src/configs/`:
+
+```
+configs/
+├── defaults/        # base config — the fallback for every tenant
+│   ├── colors.ts  content.ts  map.ts  search.ts  filters.ts  location.ts
+│   ├── routes.ts  menu.ts  listings.ts  api.ts  features.ts …
+│   └── theme/       # palette.ts  typography.ts  components.ts …
+└── <tenant>/        # only the files that differ from defaults
+```
+
+The active tenant is chosen by `NEXT_PUBLIC_APP_CONFIGURATION`. At prebuild,
+`generate-tsconfig.js` writes path aliases so `@configs/*` resolves **tenant-first, then
+defaults**:
+
+```ts
+import colors from '@configs/colors'
+// 1. configs/<tenant>/colors.ts  (if it exists)
+// 2. configs/defaults/colors.ts  (fallback)
+```
+
+<Callout type="info">
+  Add a brand-new config file under `configs/defaults/`? Re-run `pnpm --filter
+  portal-frontend generate:tsconfig` (or just restart the dev server) so the
+  alias picks it up.
+</Callout>
+
+## Override patterns
+
+A tenant config imports the default (via `@defaults/*`) and re-exports a merged object.
+Two shapes, by nesting depth:
+
+**Flat / one level — spread:**
+
+```ts
+// configs/<tenant>/search.ts
+import defaults from '@defaults/search'
+
+const config = { ...defaults, defaultBoardId: 71, vowBoardId: 71 }
+
+export default config
+```
+
+**Nested — `deepmerge` (so untouched nested fields survive):**
+
+```ts
+// configs/<tenant>/content.ts
+import deepmerge from 'deepmerge'
+
+import defaultContent from '@defaults/content'
+
+const instance: Partial<typeof defaultContent> = {
+  siteName: 'Acme Realty',
+  siteLogo: { url: '/acme/logo.svg', width: 140, height: 40 }
+}
+
+const content = deepmerge(defaultContent, instance)
+
+export default content
+```
+
+For a multi-level object like `map`, spread each nested object you touch (`mapboxDefaults`,
+`controls`, `searchArea`) so sibling fields are preserved.
+
+<Callout type="info">
+  Most configs export a default object (`export default config`); `colors.ts` is
+  the exception — it exports flat **named** constants. Match the file you are
+  overriding.
+</Callout>
+
+## Entry configs — what to change first
+
+| Config                | Controls                | Most-edited fields                                                                  |
+| --------------------- | ----------------------- | ----------------------------------------------------------------------------------- |
+| `colors.ts`           | Brand palette           | `primary`, `secondary`, `markerColors`                                              |
+| `theme/palette.ts`    | MUI semantic colors     | `primary`, `secondary` (map from `colors`)                                          |
+| `theme/typography.ts` | Fonts                   | `fontFamily`, heading weights                                                       |
+| `theme/components.ts` | MUI component styling   | per-component `styleOverrides`                                                      |
+| `content.ts`          | Identity, SEO, scripts  | `siteName`, `siteLogo`, `contactEmail/Phone`, `siteMetadata`, `customScripts`       |
+| `map.ts`              | Map framing & overlays  | `mapboxDefaults` (center/zoom), `controls`, `searchArea.defaultPolygon`, `overlays` |
+| `search.ts`           | Search & MLS boards     | `defaultBoardId`, `vowBoardId`, `singleBoard`, `autosuggestPosition`                |
+| `filters.ts`          | Search filters          | `defaultFilters`, `listingTypes`, `advancedFilterSlots`                             |
+| `location.ts`         | Home region & locations | `stateCode`, `state`, `city`, `source`, `popularSearches`                           |
+| `routes.ts`           | URL paths               | any route rename, `rootPage`                                                        |
+| `menu.ts`             | Header navigation       | `toolbar`, `profile` items                                                          |
+| `listings.ts`         | Cards & listing page    | `pricing`, `components` (PDP block toggles)                                         |
+| `features.ts`         | Capability on/off       | see [Capabilities & Flags](/getting-started/capabilities-and-flags)                 |
+| `api.ts`              | Endpoints/keys          | usually left as defaults (driven by env)                                            |
+
+<Callout type="info">
+  Every field above is documented inline — hover it in your IDE to see the JSDoc
+  description straight from `configs/defaults/*`.
+</Callout>
+
+### colors & theme
+
+`colors.ts` holds the raw brand palette as named constants. `theme/palette.ts` maps those
+onto MUI's semantic slots (`primary`, `secondary`, `error`, …), deriving `light`/`dark`
+from `main`. Override `colors.ts` and the theme follows; override `theme/*` only when you
+need to reshape specific MUI slots, fonts, or component styles.
+
+### content
+
+Site identity, logos/splashscreens (served from `public/<tenant>/`), contact info,
+`siteMetadata` (SEO), `pagesMeta` (per-page SEO with `{token}` placeholders), and
+`customScripts` (analytics/widgets, with a Next.js loading strategy). Override with
+`deepmerge`.
+
+### map
+
+`mapboxDefaults` frames the region (center, zoom, min/max zoom); `searchArea.defaultPolygon`
+bounds where searches run; `overlays` lists the map overlay layers. The Mapbox token comes
+from `NEXT_PUBLIC_MAPBOX_KEY`, not this file.
+
+### search
+
+Board routing is the field to get right. Single-board tenants leave
+`defaultBoardId === vowBoardId` (so `singleBoard` stays `true` and the board id is omitted
+from URLs and API calls). Multi-board (IDX + VOW) tenants set the two ids differently and
+override `singleBoard: false`. See [Regional & MLS Limits](/getting-started/regional-and-mls-limits#multi-board-idx-vs-vow).
+
+### filters & location
+
+`filters.ts` sets the default search state and which advanced-filter slots the tenant shows.
+`location.ts` sets the home region (`stateCode`/`state`/`city`), the location data `source`,
+and the SEO/pagination thresholds for `/locations` pages.
+
+## Next
+
+Continue to [Capabilities & Flags](/getting-started/capabilities-and-flags) to see what each
+feature does and how flags are set, or jump to the
+[Adding a New Tenant](/tutorials/adding-tenant) tutorial for the end-to-end walkthrough.

@@ -1,0 +1,58 @@
+# Location Pages — How it works
+
+> Technical anatomy of the locations catalog. Overview: [Location Pages](/product-guide/locations).
+
+## Routes & entry
+
+| Route                     | Page root                               |
+| ------------------------- | --------------------------------------- |
+| `/locations`              | `@pages/locations/LocationsPageContent` |
+| `/locations/[[...slugs]]` | `@pages/locations/LocationsPageContent` |
+
+## Providers
+
+`LocationsPageContent` mounts **`LocationProvider`** (`useLocationPage`, `useLocationMap`) with
+the location, its child locations (areas/cities/hoods), nearby locations, and listing count.
+See [State Management](/technical-guide/state-management).
+
+## Component tree
+
+```
+LocationsPageContent
+└─ LocationProvider
+   └─ LocationsPageLayout
+      ├─ header   → LocationHeader
+      ├─ filters  → LocationFilters
+      ├─ footer   → LocationFooter
+      └─ content
+         ├─ CardSurface → ListingCard ×N   (SkeletonCard while loading)
+         ├─ EmptyCatalogListings           (when no listings)
+         ├─ LocationPagination
+         ├─ LocationBreadcrumbs
+         └─ FiltersList
+```
+
+Listings are server-rendered when available, otherwise fetched client-side via
+`SearchService.fetchListings`.
+
+## Configuration
+
+| Config              | Drives                                                                                                                     |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `@configs/location` | `source` (per tenant), `useStateCodeRoute` (URL shape), `maxNearbies` / `nearbyRadius`, and the SEO/pagination thresholds. |
+| `@configs/search`   | `pageSize` for the listing grid.                                                                                           |
+| `@configs/features` | `locations` gate.                                                                                                          |
+
+## Gotchas & hints
+
+- **Never build the tree at runtime.** The location tree comes from a pre-generated
+  `public/<tenant>/locations.json`. Regenerate with `pnpm generate:locations <tenant>` after
+  data or config changes — don't compute it in a request.
+- **`source` is per tenant.** `@configs/location` `source` (e.g. `MLS`, `LiveBy`,
+  `UserDefined`) is sent on every `/locations` request and echoed back; every non-default
+  tenant must set it.
+- **`useStateCodeRoute` changes the URL shape:** `true` → `/tx/austin`, `false` →
+  `/locations/austin`. Middleware and URL builders both read it.
+- **SEO thresholds filter the tree:** `areaThreshold`, `minSeoCityCount`, `minSeoHoodCount`,
+  and the `maxSeo*` caps decide which locations render and how many are listed — low-count
+  areas are dropped.

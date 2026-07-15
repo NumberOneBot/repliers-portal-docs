@@ -1,0 +1,143 @@
+import { Callout } from 'nextra/components'
+
+# Property Search — How it works
+
+> Technical anatomy of the map/search section: providers, components, config, and gotchas.
+> For the user-facing overview see [Property Search](/product-guide/search).
+
+## Routes & entry
+
+| Route              | Page                           | Notes                                                                                                                                                                                      |
+| ------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/search`          | —                              | Redirects to `/search/map`.                                                                                                                                                                |
+| `/search/[layout]` | `app/search/[layout]/page.tsx` | `layout` = `map` or `grid`. Server component: parses filters/camera/point/polygon (or a `searchId` saved search), gates on `features.map`, mounts the providers, renders `MapPageContent`. |
+
+Root component: `src/components/pages/search/MapPageContent.tsx`.
+
+## Providers
+
+Mounted in the route (`app/search/[layout]/page.tsx`), outermost → innermost:
+
+```
+MapOptionsProvider        map camera / style / layout / 3D; splits into 5 contexts:
+│                         useMapOptions, useMapLocations, useMapLayers,
+│                         useMapPopup, useMapPopupActions
+└─ SearchProvider         filters, results, clusters, multi-units; split contexts:
+   │                      useSearch (read-heavy) vs useSearchActions (write-stable)
+   └─ AiSearchProvider    AI image/feature search; syncs its selections into SearchProvider
+      └─ PageTemplate (noFooter) → MapPageContent
+```
+
+These are **scoped** to the search section (not global). The global tree
+(`UserProvider`, `DialogProvider`, `SnackbarProvider`, feature-gated favorites/…) is
+described in [State Management](/technical-guide/state-management).
+
+<Callout type="info">
+  `SearchProvider` deliberately exposes two contexts so filter *writers*
+  (`useSearchActions`) don't re-render when *results* (`useSearch`) change. Read
+  from the narrowest hook you need.
+</Callout>
+
+## Component tree
+
+```
+MapPageContent                         owns the fetch effect + URL sync
+├─ MapFilters                          filter bar (top)
+│  ├─ AutosuggestionField              location type-ahead
+│  ├─ AiSearchButton                   image/feature AI search entry
+│  ├─ AdvancedFiltersButton            opens the advanced-filters dialog
+│  └─ SaveSearchButton                 persists the current filter set
+└─ MapRoot  (memoized)                 map + list orchestrator
+   ├─ OverlayLayersController          overlay (schools/…) GL layers
+   ├─ MapContainer  (@shared/Map)      Mapbox canvas; listing markers via useListingMarkers
+   ├─ MapControls                      zoom / compass / 3D / draw / layers / style buttons
+   ├─ SunriseSliderContainer           { SunriseSlider, CalendarSlider } — shadows/time (tenant)
+   ├─ MapTitle · SaveSearchCanvas
+   ├─ ListingDrawer                    mobile: tapped-marker listing preview
+   ├─ GridDesktopContainer | GridMobileDrawer
+   │  ├─ GridFilters
+   │  ├─ GridContent                   the card grid
+   │  └─ ChatContent                   AI chat panel — `features.aiChat`
+   ├─ ListingBrowserDialog             wide-desktop: paged listing browser
+   ├─ SaveSearchDialog                 `features.saveSearch`
+   ├─ SupportAgent                     EVAS agent iframe — `features.aiAgent`
+   └─ OverlayMarkerPopup · ListingPopupHost
+```
+
+Files live under `src/components/pages/search/` (`MapPageContent.tsx`,
+`components/MapFilters/`, `components/MapRoot/`). The map canvas, markers, and popups are
+shared: `src/components/shared/Map/`.
+
+## Configuration
+
+| Config                 | Drives                                                                                   |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| `@configs/map`         | Initial camera (`mapboxDefaults`), controls, `searchArea` boundary, overlays. An overlay with `external` (`resolveLocation` + `filterToken`) makes its markers selectable as external locations persisted via `externalLocationId`. |
+| `@configs/search`      | Paging, clustering, MLS board routing, `autosuggestPosition`, `extractLocationPolygons`. |
+| `@configs/filters`     | `defaultFilters`, the type-selector `listingTypes` list, and which advanced-filter slots render. |
+| `@configs/params`      | URL-param shorthand names for the shareable search state.                                |
+| `@configs/cards-grids` | `mapTopOffset` and grid sizing.                                                          |
+| `@configs/ai-agent`    | `headlessIframeId` for the EVAS agent.                                                   |
+| `@configs/features`    | Gates `map`, `aiChat`, `aiAgent`, `saveSearch`, `blurRestrictedProperty`.                |
+
+## Gotchas & hints
+
+- **First fetch hinges on `mapLoaded`.** `position` is value-deduped in
+  `MapOptionsProvider`, so when `moveend` sets the final camera before `load` fires, the
+  `mapLoaded` false→true transition is the only thing that dispatches the initial fetch —
+  it must stay in the effect deps (`MapPageContent`).
+- **Map markers = top-level results + inlined small-cluster listings.** They are deduped
+  (`dedupeListings`) because the API can return both; `boardId` is backfilled in the Search
+  service so the inlined twin collapses onto the top-level key. Miss this and you get phantom
+  duplicate markers / a hung listing browser.
+- **Markers are imperative DOM, not React.** `useListingMarkers` wires plain DOM click
+  handlers, so their callbacks read component state through **refs**
+  (`multiUnitsRef`, `mapListingsRef`), not live React state.
+- **Listing markers are DOM; overlays/polygons are GL.** The map canvas mixes a DOM marker
+  layer (listings) with GL layers (overlays, draw polygons) — see `@shared/Map`.
+- **URL sync has two modes.** Changing filters or camera resets the page to 1; changing
+  layout / overlay layers / 3D / style keeps the page and writes `window.history` directly
+  (not the Next router).
+- **`MapRoot` is memoized** so toggling an overlay layer (which re-renders `MapPageContent`
+  for URL sync) doesn't re-render the heavy map subtree; the layers menu updates via its own
+  `useMapLayers` subscription.
+- **Feature gates render inline:** `aiChat` → `ChatContent`, `aiAgent` → `SupportAgent`,
+  `saveSearch` → `SaveSearchDialog`, `blurRestrictedProperty` → address-label restriction on
+  style load.
+- **External overlay selections ride POST `queries`.** Selecting an external-source overlay
+  marker (e.g. a MoveSmartly school) stores `externalLocationId=<overlayId>-<rest>` in the
+  URL; on load the owning overlay's `external.resolveLocation` rebuilds the location and its
+  merged (Multi)Polygon. The listings request then switches to `queries`:
+  `[{ locationId, map: region }, { map: clippedExternalPolygons }]` — queries UNION while
+  params inside one query AND. Never emit a top-level `map` together with a query `map`
+  (Repliers rejects the conflict with a 400), and never let `externalLocationId` reach the
+  API — `getSearchArea` strips it (plus a defensive strip in `processParams`).
+- **Changing an overlay's filter options drops its selected external locations** (same rule
+  as hiding the layer): the id's trailing filter token no longer matches
+  `external.filterToken(options)` — enforced by `useExternalSelectionReset`.
+- **Two kinds of user-defined region.** `SearchProvider.polygon` is the draw tool's state:
+  exactly ONE editable ring, URL-persisted (`polygon=`). `SearchProvider.region` is the
+  multi-ring `map` of a loaded saved search: read-only (the one-ring draw editor can't
+  represent it) and NOT URL-persisted (merged location boundaries are far beyond URL size
+  limits — it survives filter changes but not a reload, like the saved-search title). They
+  are separate fields by design: widening `polygon` into a union would push array-depth
+  sniffing into the draw editor, the URL sync and every consumer, for a state with a
+  different lifecycle. Shared touchpoints stay shared: both clear via `clearPolygon`, both
+  feed `getSearchArea` (accepts either depth), both render on the `'user'` source.
+  Single-ring saved searches keep loading as the editable `polygon` for back-compat.
+- **Listing types map to `{ class, propertyType, style }`, not just a propertyType list.**
+  Each `listingTypes` key is resolved by `optionalTransformers.listingType` in
+  `services/Search/declarations.ts` (shared across tenants; only the `TYPE_*`/`STYLE_*`
+  values are per-tenant). The generic `townhome` key is **class-agnostic** on purpose. To
+  split townhouses by property class you must add **separate keys** — the shared transformer
+  can't gain a `class` constraint without affecting every tenant. A tenant that needs the
+  split adds dedicated keys — `residentialTownhome` (`class: residential`) and `condoTownhome`
+  (`class: condo`, with a condo-only `propertyType` pulled out of `TYPE_CONDO`) — and lists
+  them in place of `townhome` in its selector. `ListingType` comes from the
+  `availableListingTypes` superset (not the default
+  `listingTypes` array), so granular/virtual keys type-check without appearing in the default
+  selector. New keys also need a `LocationHeader.title` branch in i18n or the SEO title falls
+  back to "Real Estate". Location-page slugs resolve through `parseListingType`
+  (`app/locations/[[...slugs]]/_utils`), which is tenant-guarded: a `townhomes` slug (or
+  `condos`+`townhomes`) maps to the class-scoped type only when the tenant's `listingTypes`
+  expose it, otherwise it stays the class-agnostic `townhome`.
